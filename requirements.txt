@@ -1,24 +1,30 @@
 Flask==3.1.2
+gunicorn
+
+# LangChain (solo los módulos usados)
 langchain
 langchain-community
 langchain-core
-langchain-ollama
 langchain-text-splitters
-chromadb
-requests
-beautifulsoup4
-pandas
-nltk
-scikit-learn
-tqdm
 langchain-groq
-python-dotenv
-pypdf
-pymongo
-pandas
 langchain-huggingface
-sentence-transformers
 langchain-chroma
-pdfplumber
-PyPDF2>=3.0.0
-reportlab
+
+# Bases de datos y vectores
+chromadb
+pymongo
+
+# IA y embeddings (API-only — sin sentence-transformers ni PyTorch)
+huggingface_hub
+
+# Procesamiento de documentos
+pypdf
+beautifulsoup4
+requests
+
+# ML ligero
+scikit-learn
+numpy
+
+# Utilidades
+python-dotenv

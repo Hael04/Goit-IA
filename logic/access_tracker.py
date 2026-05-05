@@ -1,5 +1,5 @@
-import pandas as pd
 from datetime import datetime
+from collections import Counter
 import sys
 import os
 
@@ -23,11 +23,6 @@ from database import (
 
 def registrar_acceso(programa: str, ip: str,
                      dispositivo: str, matricula: str = "") -> bool:
-    """
-    Guarda el registro de acceso en MongoDB.
-    El campo `matricula` es opcional para compatibilidad con registros
-    anteriores que no lo incluyen.
-    """
     ahora = datetime.now()
     try:
         insert_access_log(
@@ -47,16 +42,12 @@ def registrar_acceso(programa: str, ip: str,
 
 
 # ──────────────────────────────────────────────────────────────
-# REGISTRO DE PREGUNTA  (nuevo — por cada mensaje al chat)
+# REGISTRO DE PREGUNTA
 # ──────────────────────────────────────────────────────────────
 
 def registrar_pregunta(matricula: str, programa: str,
                        pregunta: str, respuesta: str,
                        modelo: str) -> bool:
-    """
-    Guarda cada pregunta/respuesta junto con la matrícula del alumno,
-    el programa educativo y el modelo que respondió (KNN o LLM).
-    """
     ahora = datetime.now()
     try:
         insert_chat_log(
@@ -76,41 +67,40 @@ def registrar_pregunta(matricula: str, programa: str,
 
 
 # ──────────────────────────────────────────────────────────────
-# ESTADÍSTICAS Y LISTADOS  (para el panel de admin)
+# ESTADÍSTICAS Y LISTADOS  (panel admin — sin pandas)
 # ──────────────────────────────────────────────────────────────
 
 def obtener_estadisticas_diarias() -> dict:
-    """Conteo de accesos por programa (para tarjetas del dashboard)."""
+    """Conteo de accesos por programa usando collections.Counter."""
     try:
         registros = get_all_access_logs()
         if not registros:
             return {}
-        df = pd.DataFrame(registros)
-        return df['programa'].value_counts().to_dict()
+        return dict(Counter(r.get('programa', '') for r in registros if r.get('programa')))
     except Exception as e:
         print(f"❌ Error obteniendo estadísticas: {e}")
         return {}
 
 
 def obtener_todos_los_registros() -> list[dict]:
-    """
-    Todos los registros de acceso para la tabla del panel de administración,
-    del más reciente al más antiguo.
-    """
+    """Registros de acceso ordenados del más reciente al más antiguo."""
     try:
         registros = get_all_access_logs()
         if not registros:
             return []
 
-        df = pd.DataFrame(registros)
+        # Garantizar campo matricula en registros antiguos
+        for r in registros:
+            r.setdefault('matricula', '')
+            # Reemplazar None por cadena vacía en todos los campos
+            for k, v in r.items():
+                if v is None:
+                    r[k] = ''
 
-        # Asegurar que la columna matricula exista (registros viejos no la tienen)
-        if 'matricula' not in df.columns:
-            df['matricula'] = ''
-
-        df = df.fillna('')
-        df = df.sort_values(by=['fecha', 'hora'], ascending=False)
-        return df.to_dict(orient='records')
+        # Ordenar por fecha y hora descendente (MongoDB ya los entrega así,
+        # pero lo reforzamos en caso de registros sin índice)
+        registros.sort(key=lambda r: (r.get('fecha', ''), r.get('hora', '')), reverse=True)
+        return registros
 
     except Exception as e:
         print(f"❌ Error obteniendo registros históricos: {e}")

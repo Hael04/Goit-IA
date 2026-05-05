@@ -31,11 +31,10 @@ chatbot_bp = Blueprint('chatbot', __name__, template_folder=template_dir)
 # Regex de validación de matrícula: S + exactamente 8 dígitos = 9 chars
 MATRICULA_REGEX = re.compile(r'^[Ss]\d{8}$')
 
-selector = None
-try:
-    selector = SelectorDeModelo(usar_knn=True, usar_llm=True)
-except Exception as e:
-    print(f"Error al iniciar selector: {e}")
+# El selector se crea inmediatamente pero NO hace ninguna llamada de red en __init__.
+# Toda la inicialización de KNN y LLM ocurre de forma diferida en la primera consulta.
+selector = SelectorDeModelo(usar_knn=True, usar_llm=True)
+print("✅ Selector de modelos creado (inicialización de red diferida a la primera consulta).")
 
 
 # ──────────────────────────────────────────────────────────────

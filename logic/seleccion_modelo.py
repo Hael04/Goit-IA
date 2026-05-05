@@ -1,6 +1,11 @@
 # --- seleccion_modelo.py ---
+import time
 from models.modelo_knn import obtener_respuesta_knn
 from models.modelo_llm import obtener_cadena_rag
+
+# Tiempo mínimo entre reintentos de conexión al LLM (segundos)
+_MIN_SEGUNDOS_REINTENTO_LLM = 60
+
 
 class SelectorDeModelo:
     def __init__(self, usar_knn=True, usar_llm=True, umbral_distancia=0.2):
@@ -9,35 +14,64 @@ class SelectorDeModelo:
         self.UMBRAL_DISTANCIA_COSINE = umbral_distancia
         self.rag_chain = None
 
-        if self.usar_llm:
-            try:
-                print("Iniciando y cargando el modelo LLM (RAG)...")
-                self.rag_chain = obtener_cadena_rag()
+        # Control de reintentos: 0.0 → el primer intento se hace en la primera consulta
+        self._ultimo_intento_llm = 0.0
+
+    # ──────────────────────────────────────────────────────────
+    # Inicialización diferida del LLM
+    # ──────────────────────────────────────────────────────────
+
+    def _init_llm_si_necesario(self):
+        """
+        Conecta con Chroma Cloud y crea la cadena RAG de forma diferida.
+        Solo reintenta si han pasado al menos _MIN_SEGUNDOS_REINTENTO_LLM
+        desde el último intento fallido, evitando bloquear cada petición.
+        """
+        if self.rag_chain is not None:
+            return   # ya está listo
+
+        if not self.usar_llm:
+            return   # desactivado permanentemente por configuración
+
+        segundos_desde_ultimo = time.monotonic() - self._ultimo_intento_llm
+        if segundos_desde_ultimo < _MIN_SEGUNDOS_REINTENTO_LLM:
+            return   # aún en período de espera tras un fallo anterior
+
+        self._ultimo_intento_llm = time.monotonic()
+
+        try:
+            print("🔄 Intentando conectar con el LLM (RAG)...")
+            cadena = obtener_cadena_rag()
+            if cadena:
+                self.rag_chain = cadena
                 print("✅ Modelo LLM listo.")
-            except Exception as e:
-                print(f"❌ Error LLM: {e}")
-                self.usar_llm = False
+            else:
+                print("⚠️ LLM: colección Chroma no encontrada. Entrena el modelo desde el panel admin.")
+        except Exception as e:
+            print(f"❌ Error conectando con LLM: {e}. Se reintentará en {_MIN_SEGUNDOS_REINTENTO_LLM}s.")
+
+    # ──────────────────────────────────────────────────────────
+    # Lógica principal de respuesta
+    # ──────────────────────────────────────────────────────────
 
     def responder(self, pregunta, historial="", forzar_llm=False):
         """
         Lógica híbrida de selección de modelo:
 
-        1. KNN: busca coincidencia semántica en el caché FAQ.
-           - Si la FAQ está BLOQUEADA y la distancia es aceptable → siempre retorna esa respuesta,
-             ignorando forzar_llm. La respuesta bloqueada nunca puede ser regenerada.
-           - Si la FAQ NO está bloqueada y la distancia es aceptable → retorna solo si no se fuerza LLM.
-        2. LLM (RAG): se usa cuando KNN no encuentra coincidencia o se fuerza regeneración.
+        1. KNN: busca coincidencia semántica en el caché FAQ (inicialización diferida interna).
+           - FAQ BLOQUEADA + distancia aceptable → siempre devuelve esa respuesta (ignora forzar_llm).
+           - FAQ normal + distancia aceptable + no forzar_llm → devuelve desde caché.
+        2. LLM RAG: se usa cuando KNN no aplica o se fuerza regeneración (inicialización diferida aquí).
 
         Retorna: (respuesta: str, fuente: str, bloqueado: bool)
         """
 
-        # 1. Intentar KNN
+        # 1. Intentar KNN (el módulo gestiona su propia inicialización diferida)
         if self.usar_knn:
             respuesta_knn, distancia, bloqueado = obtener_respuesta_knn(pregunta)
 
             if respuesta_knn and distancia <= self.UMBRAL_DISTANCIA_COSINE:
                 if bloqueado:
-                    # Respuesta bloqueada: siempre fija, sin importar forzar_llm
                     print(f"[Selector] FAQ BLOQUEADA activada (distancia={distancia:.4f})")
                     return respuesta_knn, "KNN (Bloqueado)", True
 
@@ -45,16 +79,26 @@ class SelectorDeModelo:
                     print(f"[Selector] KNN caché activado (distancia={distancia:.4f})")
                     return respuesta_knn, "KNN (Caché Semántico)", False
 
-        # 2. LLM RAG (si KNN no aplica o se fuerza regeneración)
-        if self.usar_llm and self.rag_chain:
+        # 2. LLM RAG — inicializar si aún no está listo
+        self._init_llm_si_necesario()
+
+        if self.rag_chain:
             try:
                 respuesta_llm = self.rag_chain.invoke({
                     "question": pregunta,
-                    "history": historial
+                    "history":  historial
                 })
                 return respuesta_llm, "LLM (RAG Generativo)", False
             except Exception as e:
-                print(f"Error RAG: {e}")
-                return "Error al generar respuesta con IA.", "Error", False
+                print(f"[Selector] Error en RAG: {e}. Invalidando cadena para forzar reconexión.")
+                # Invalida la cadena para que el siguiente intento reconecte
+                self.rag_chain = None
+                self._ultimo_intento_llm = 0.0
+                return "Ocurrió un error al generar la respuesta. Por favor, intenta de nuevo en unos momentos.", "Error", False
 
-        return "Lo siento, no tengo información sobre eso.", "Nulo", False
+        return (
+            "El sistema de respuestas no está disponible en este momento. "
+            "Por favor, intenta de nuevo en unos minutos.",
+            "Nulo",
+            False
+        )

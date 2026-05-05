@@ -15,7 +15,15 @@ if not MONGODB_URL:
     raise ValueError("❌ Error: No se ha definido MONGODB_URL en el archivo .env")
 
 # Cliente MongoDB (síncrono, compatible con Flask)
-client = MongoClient(MONGODB_URL)
+# serverSelectionTimeoutMS=5000 → falla rápido si Atlas no es alcanzable,
+# en lugar de bloquear la app durante 30 s.
+client = MongoClient(
+    MONGODB_URL,
+    serverSelectionTimeoutMS=5000,
+    connectTimeoutMS=5000,
+    socketTimeoutMS=10000,
+    retryWrites=True,
+)
 db = client[DB_NAME]
 
 # --- COLECCIONES ---
